@@ -3,7 +3,7 @@
 	import LeagueSelector from '$lib/components/LeagueSelector.svelte';
 	import Tip from '$lib/components/tip.svelte';
 
-	let selectedLeague = 'Runes of Aldur';
+	let selectedLeague = $state('Runes of Aldur');
 
 	function handleLeagueChange(league: string) {
 		selectedLeague = league;

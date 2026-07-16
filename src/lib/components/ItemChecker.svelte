@@ -1,28 +1,37 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { fetchStats, findStatId, extractValue } from '$lib/utils/stat-utils.js';
 	import { parseItemText } from '$lib/utils/item-parser.js';
 	import { ITEM_CLASS_MAP } from '../constants/item-class-map.js';
 
-	export let league: string;
+	type Props = {
+		league: string;
+	};
 
-	const RATE_LIMIT_DELAY = 1000;
+	let { league }: Props = $props();
 
-	let itemText = '';
-	let error: string | null = null;
-	let loading = false;
-	let includeItemLevel = false;
-	let isStatsLoaded = false;
-	let itemDisplayHtml: string;
+	let itemText = $state('');
+	let error = $state<string | null>(null);
+	let loading = $state(false);
+	let includeItemLevel = $state(false);
+	let isStatsLoaded = $state(false);
+	let itemDisplayHtml = $state('');
 
-	onMount(async () => {
-		try {
-			await fetchStats();
-			isStatsLoaded = true;
-		} catch (err) {
-			error = 'Failed to load item stats database';
-			console.error('Failed to load stats:', err);
-		}
+	$effect(() => {
+		let cancelled = false;
+
+		void fetchStats()
+			.then(() => {
+				if (!cancelled) isStatsLoaded = true;
+			})
+			.catch((err: unknown) => {
+				if (cancelled) return;
+				error = 'Failed to load item stats database';
+				console.error('Failed to load stats:', err);
+			});
+
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	async function handleSearch() {
@@ -139,8 +148,6 @@
 				};
 			}
 
-			await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY));
-
 			const response = await fetch('/api/poe/search', {
 				method: 'POST',
 				headers: {
@@ -184,36 +191,53 @@
 		return text
 			.split('\n')
 			.map((line, i) => {
+				const safeLine = escapeHtml(line);
+
 				if (line.includes('--------')) {
-					return `<div class="separator">--------</div>`;
+					return `<div class="separator">${safeLine}</div>`;
 				}
 				if (line.startsWith('Item Class:')) {
-					return `<div class="item-class">${line}</div>`;
+					return `<div class="item-class">${safeLine}</div>`;
 				}
 				if (line.startsWith('Item Level:')) {
-					return `<div class="item-level">${line}</div>`;
+					return `<div class="item-level">${safeLine}</div>`;
 				}
 				if (line.startsWith('Rarity:')) {
-					return `<div class="rarity">${line}</div>`;
+					return `<div class="rarity">${safeLine}</div>`;
 				}
 				if (line.match(/[0-9]+/)) {
-					return `<div class="stat">${line}</div>`;
+					return `<div class="stat">${safeLine}</div>`;
 				}
 				if (line.includes('Requires')) {
-					return `<div class="requirement">${line}</div>`;
+					return `<div class="requirement">${safeLine}</div>`;
 				}
 				if (i <= 2 && line.trim() && !line.includes(':')) {
-					return `<div class="item-name">${line}</div>`;
+					return `<div class="item-name">${safeLine}</div>`;
 				}
-				return `<div class="regular-text">${line}</div>`;
+				return `<div class="regular-text">${safeLine || '<br>'}</div>`;
 			})
 			.join('');
+	}
+
+	function escapeHtml(text: string): string {
+		return text.replace(
+			/[&<>"']/g,
+			(character) =>
+				({
+					'&': '&amp;',
+					'<': '&lt;',
+					'>': '&gt;',
+					'"': '&quot;',
+					"'": '&#039;'
+				})[character] ?? character
+		);
 	}
 
 	function handlePaste(e: ClipboardEvent) {
 		e.preventDefault();
 		const text = e.clipboardData?.getData('text') || '';
 		itemText = text;
+		itemDisplayHtml = formatItemText(text);
 	}
 
 	function handleInput(e: Event) {
@@ -221,17 +245,6 @@
 		if (target instanceof HTMLDivElement) {
 			itemText = target.innerText || '';
 		}
-	}
-
-	function handleKeyDown(e: KeyboardEvent) {
-		if (e.ctrlKey && e.key === 'v') {
-			// Clear existing text first, then allow paste
-			itemText = '';
-		}
-	}
-
-	$: {
-		itemDisplayHtml = formatItemText(itemText);
 	}
 </script>
 
@@ -243,21 +256,23 @@
 			role="textbox"
 			tabindex="0"
 			bind:innerHTML={itemDisplayHtml}
-			on:paste={handlePaste}
-			on:input={handleInput}
-			on:keydown={handleKeyDown}
+			onpaste={handlePaste}
+			oninput={handleInput}
+			aria-label="Path of Exile item data"
+			aria-multiline="true"
+			data-placeholder="Paste copied item data here"
 			spellcheck="false"
 		></div>
 	</div>
 
 	{#if error}
-		<div class="error-message">
+		<div class="error-message" role="alert">
 			{error}
 		</div>
 	{/if}
 
 	<div class="option-container">
-		<label for="includeItemLevel" class="option-label"> Include item level in search </label>
+		<span id="includeItemLevel-label" class="option-label">Include item level in search</span>
 		<button
 			role="switch"
 			id="includeItemLevel"
@@ -265,7 +280,7 @@
 			aria-labelledby="includeItemLevel-label"
 			class="toggle-switch"
 			class:active={includeItemLevel}
-			on:click={() => (includeItemLevel = !includeItemLevel)}
+			onclick={() => (includeItemLevel = !includeItemLevel)}
 		>
 			<span class="toggle-knob"></span>
 		</button>
@@ -274,12 +289,12 @@
 	<button
 		class="search-button"
 		data-umami-event="Search button"
-		on:click={handleSearch}
+		onclick={handleSearch}
 		disabled={loading || !isStatsLoaded}
 	>
 		{#if loading}
 			<div class="loading-indicator">
-				<svg class="spinner" viewBox="0 0 24 24">
+				<svg class="spinner" viewBox="0 0 24 24" aria-hidden="true">
 					<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
 					<path
 						fill="currentColor"
@@ -288,6 +303,8 @@
 				</svg>
 				Searching...
 			</div>
+		{:else if !isStatsLoaded}
+			Loading item stats…
 		{:else}
 			Search on PoE Trade
 		{/if}
@@ -345,34 +362,16 @@
 			box-shadow var(--transition-standard);
 	}
 
+	.item-input:empty::before {
+		content: attr(data-placeholder);
+		color: var(--text-secondary);
+		pointer-events: none;
+	}
+
 	.item-input:focus {
 		outline: none;
 		border-color: rgba(209, 123, 70, 0.5);
 		box-shadow: 0 0 0 1px rgba(209, 123, 70, 0.3);
-	}
-
-	/* Scrollbar styling */
-	.item-input {
-		scrollbar-width: thin;
-		scrollbar-color: rgba(255, 255, 255, 0.15) rgba(255, 255, 255, 0.05);
-	}
-
-	.item-input::-webkit-scrollbar {
-		width: 6px;
-	}
-
-	.item-input::-webkit-scrollbar-track {
-		background: rgba(255, 255, 255, 0.05);
-		border-radius: 9999px;
-	}
-
-	.item-input::-webkit-scrollbar-thumb {
-		background-color: rgba(255, 255, 255, 0.15);
-		border-radius: 9999px;
-	}
-
-	.item-input::-webkit-scrollbar-thumb:hover {
-		background-color: rgba(255, 255, 255, 0.25);
 	}
 
 	.error-message {

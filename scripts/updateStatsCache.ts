@@ -3,9 +3,15 @@ import path from 'path';
 
 async function updateStatsCache() {
   try {
+    const contactEmail = process.env.PUBLIC_EXILE_CONTACT_EMAIL;
+
+    if (!contactEmail) {
+      throw new Error('PUBLIC_EXILE_CONTACT_EMAIL is required');
+    }
+
     const response = await fetch('https://www.pathofexile.com/api/trade2/data/stats', {
       headers: {
-        'User-Agent': 'OAuth poe-item-checker/1.0.0 (contact: sanzodown@hotmail.fr)',
+        'User-Agent': `OAuth oriath-scales/1.0.0 (contact: ${contactEmail})`,
         'Accept': 'application/json',
       },
     });
@@ -20,7 +26,14 @@ async function updateStatsCache() {
       data
     };
 
-    const cachePath = path.join(process.cwd(), 'src', 'server', 'cache', 'stats.json');
+    const cachePath = path.join(
+      process.cwd(),
+      'src',
+      'lib',
+      'server',
+      'cache',
+      'stats.json'
+    );
     await fs.writeFile(cachePath, JSON.stringify(cache, null, 2));
     console.log('Stats cache updated successfully');
   } catch (error) {

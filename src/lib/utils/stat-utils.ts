@@ -39,12 +39,36 @@ function isStatEntry(
 
 interface OptimizedStatsCache {
 	allStats: StatOption[];
-	normalizedTextToStat: Map<string, StatOption>;
-	fuseInstance: Fuse<StatOption>;
-	implicitStats: StatOption[];
-	implicitNormalizedTextToStat: Map<string, StatOption>;
-	implicitFuseInstance: Fuse<StatOption> | null;
+	statsByNamespace: Map<string, StatSearchConfiguration>;
+	fallbackSearch: StatSearchConfiguration;
 	timestamp: number;
+}
+
+interface StatSearchConfiguration {
+	normalizedMap: Map<string, StatOption>;
+	fuseInstance: Fuse<StatOption> | null;
+}
+
+const MODIFIER_MARKER_TO_NAMESPACE: Record<string, string> = {
+	implicit: 'implicit',
+	fractured: 'fractured',
+	crafted: 'crafted',
+	enchant: 'enchant',
+	rune: 'rune',
+	augment: 'rune',
+	desecrated: 'desecrated'
+};
+
+function statNamespace(stat: StatOption): string {
+	return stat.id.split('.', 1)[0]?.toLowerCase() || 'unknown';
+}
+
+function requestedNamespace(statText: string): string {
+	const marker = statText.match(
+		/\((implicit|fractured|crafted|enchant|rune|augment|desecrated)\)\s*$/i
+	)?.[1];
+
+	return marker ? MODIFIER_MARKER_TO_NAMESPACE[marker.toLowerCase()]! : 'explicit';
 }
 
 class StatsManager {
@@ -136,12 +160,8 @@ class StatsManager {
 		return data;
 	}
 
-	private processStatsData(data: { result: StatGroup[] }): {
-		allStats: StatOption[];
-		implicitStats: StatOption[];
-	} {
+	private processStatsData(data: { result: StatGroup[] }): StatOption[] {
 		const allStats: StatOption[] = [];
-		const implicitStats: StatOption[] = [];
 
 		for (const group of data.result) {
 			if (!isStatGroup(group)) {
@@ -161,10 +181,6 @@ class StatsManager {
 				};
 
 				allStats.push(stat);
-
-				if (group.label === 'Implicit') {
-					implicitStats.push(stat);
-				}
 			}
 		}
 
@@ -172,43 +188,44 @@ class StatsManager {
 			throw new Error('No valid stats received');
 		}
 
-		return { allStats, implicitStats };
+		return allStats;
 	}
 
-	private createOptimizedCache(processedStats: {
-		allStats: StatOption[];
-		implicitStats: StatOption[];
-	}): OptimizedStatsCache {
-		const { allStats, implicitStats } = processedStats;
-
-		// Pre-compute normalized text mappings for O(1) lookups
-		const normalizedTextToStat = new Map<string, StatOption>();
-		const implicitNormalizedTextToStat = new Map<string, StatOption>();
-
-		// Build lookup maps
+	private createOptimizedCache(allStats: StatOption[]): OptimizedStatsCache {
+		const statsByNamespace = new Map<string, StatOption[]>();
 		for (const stat of allStats) {
-			const normalized = normalizeStatText(stat.text);
-			if (normalized) {
-				normalizedTextToStat.set(normalized, stat);
-			}
-		}
-
-		for (const stat of implicitStats) {
-			const normalized = normalizeStatText(stat.text);
-			if (normalized) {
-				implicitNormalizedTextToStat.set(normalized, stat);
-			}
+			const namespace = statNamespace(stat);
+			const namespaceStats = statsByNamespace.get(namespace) ?? [];
+			namespaceStats.push(stat);
+			statsByNamespace.set(namespace, namespaceStats);
 		}
 
 		return {
 			allStats,
-			normalizedTextToStat,
-			fuseInstance: this.createFuseInstance(allStats),
-			implicitStats,
-			implicitNormalizedTextToStat,
-			implicitFuseInstance:
-				implicitStats.length > 0 ? this.createFuseInstance(implicitStats) : null,
+			statsByNamespace: new Map(
+				[...statsByNamespace].map(([namespace, stats]) => [
+					namespace,
+					this.createSearchConfiguration(stats)
+				])
+			),
+			fallbackSearch: this.createSearchConfiguration(allStats),
 			timestamp: Date.now()
+		};
+	}
+
+	private createSearchConfiguration(stats: StatOption[]): StatSearchConfiguration {
+		const normalizedMap = new Map<string, StatOption>();
+
+		for (const stat of stats) {
+			const normalized = normalizeStatText(stat.text);
+			if (normalized && !normalizedMap.has(normalized)) {
+				normalizedMap.set(normalized, stat);
+			}
+		}
+
+		return {
+			normalizedMap,
+			fuseInstance: stats.length > 0 ? this.createFuseInstance(stats) : null
 		};
 	}
 
@@ -227,53 +244,39 @@ class StatsManager {
 			return null;
 		}
 
-		const searchingForImplicit = statText.toLowerCase().includes('implicit');
-		const searchConfig = this.getSearchConfiguration(searchingForImplicit);
+		const namespace = requestedNamespace(statText);
+		const searchConfig = this.getSearchConfiguration(namespace);
 
 		const exactMatch = searchConfig.normalizedMap.get(cleanInput);
 		if (exactMatch) {
-			this.logMatch('Exact match found', cleanInput, exactMatch, searchingForImplicit);
+			this.logMatch('Exact match found', cleanInput, exactMatch, namespace);
 			return exactMatch.id;
 		}
 
 		const fuzzyMatch = this.findFuzzyMatch(cleanInput, searchConfig.fuseInstance);
 		if (fuzzyMatch) {
-			this.logMatch(
-				'Fuzzy match found',
-				cleanInput,
-				fuzzyMatch,
-				searchingForImplicit,
-				fuzzyMatch.score
-			);
+			this.logMatch('Fuzzy match found', cleanInput, fuzzyMatch, namespace, fuzzyMatch.score);
 			return fuzzyMatch.id;
 		}
 
-		this.logNoMatch(cleanInput, searchingForImplicit, searchConfig.normalizedMap.size);
+		this.logNoMatch(cleanInput, namespace, searchConfig.normalizedMap.size);
 		return null;
 	}
 
-	private getSearchConfiguration(searchingForImplicit: boolean) {
+	private getSearchConfiguration(namespace: string): StatSearchConfiguration {
 		if (!this.cache) {
 			throw new Error('Cache not available');
 		}
 
-		if (searchingForImplicit && this.cache.implicitFuseInstance) {
-			return {
-				normalizedMap: this.cache.implicitNormalizedTextToStat,
-				fuseInstance: this.cache.implicitFuseInstance
-			};
-		}
-
-		return {
-			normalizedMap: this.cache.normalizedTextToStat,
-			fuseInstance: this.cache.fuseInstance
-		};
+		return this.cache.statsByNamespace.get(namespace) ?? this.cache.fallbackSearch;
 	}
 
 	private findFuzzyMatch(
 		cleanInput: string,
-		fuseInstance: Fuse<StatOption>
+		fuseInstance: Fuse<StatOption> | null
 	): (StatOption & { score?: number }) | null {
+		if (!fuseInstance) return null;
+
 		const searchResults = fuseInstance.search(cleanInput);
 		const bestResult = searchResults[0];
 
@@ -316,7 +319,7 @@ class StatsManager {
 		type: string,
 		input: string,
 		match: StatOption,
-		wasImplicitSearch: boolean,
+		namespace: string,
 		score?: number
 	): void {
 		if (process.env.NODE_ENV === 'development') {
@@ -325,7 +328,7 @@ class StatsManager {
 				match: this.sanitizeForLogging(match.text),
 				id: match.id,
 				type: match.type,
-				wasImplicitSearch
+				namespace
 			};
 			if (score !== undefined) {
 				logData.score = score;
@@ -334,11 +337,11 @@ class StatsManager {
 		}
 	}
 
-	private logNoMatch(input: string, wasImplicitSearch: boolean, statsSearched: number): void {
+	private logNoMatch(input: string, namespace: string, statsSearched: number): void {
 		if (process.env.NODE_ENV === 'development') {
 			console.debug('No match found:', {
 				input: this.sanitizeForLogging(input),
-				wasImplicitSearch,
+				namespace,
 				statsSearched
 			});
 		}
@@ -355,19 +358,23 @@ const statsManager = new StatsManager();
 export const fetchStats = (): Promise<StatOption[]> => statsManager.fetchStats();
 export const findStatId = (statText: string): string | null => statsManager.findStatId(statText);
 
-function normalizeStatText(text: string): string {
+export function normalizeStatText(text: string): string {
 	if (!text || typeof text !== 'string') {
 		return '';
 	}
 
 	return text
 		.toLowerCase()
+		.replace(
+			/([+-]?\d+(?:\.\d+)?)\s*\(\s*[+-]?\d+(?:\.\d+)?(?:\s*-\s*[+-]?\d+(?:\.\d+)?)?\s*\)/g,
+			'$1'
+		) // Remove advanced-copy roll ranges, e.g. 104(100-119)
+		.replace(/\s*\((?:implicit|fractured|crafted|enchant|rune|augment|desecrated)\)\s*$/i, '')
 		.replace(/\+(?=\d)/g, '') // Remove plus signs before numbers
 		.replace(/\[|\]/g, '') // Remove brackets
 		.replace(/\|.*?(?=\s|$)/g, '') // Remove pipe sections
 		.replace(/[+-]?\d+\.?\d*/g, '#') // Replace numbers with placeholder
 		.replace(/\s+/g, ' ') // Normalize whitespace
-		.replace(/\s*\(implicit\)$/, '') // Remove `(implicit)`
 		.replace(/^adds /, '') // Remove common prefixes
 		.replace(/^gain /, '')
 		.replace(/^you /, '')

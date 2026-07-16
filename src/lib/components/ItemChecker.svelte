@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { fetchStats, findStatId, extractValue } from '$lib/utils/stat-utils.js';
+	import { parseItemText } from '$lib/utils/item-parser.js';
 	import { ITEM_CLASS_MAP } from '../constants/item-class-map.js';
-	import type { ParsedItem } from '../types/trade-query.types.js';
 
 	export let league: string;
 
@@ -13,7 +13,7 @@
 	let loading = false;
 	let includeItemLevel = false;
 	let isStatsLoaded = false;
-	let itemDisplayHtml = '';
+	let itemDisplayHtml: string;
 
 	onMount(async () => {
 		try {
@@ -24,61 +24,6 @@
 			console.error('Failed to load stats:', err);
 		}
 	});
-
-	function parseItemText(text: string): ParsedItem {
-		const lines = text
-			.split('\n')
-			.map((line) => line.trim())
-			.filter(Boolean);
-		let itemClass: string | undefined;
-		let itemLevel: number | undefined;
-		const stats: string[] = [];
-		let rarity: string | undefined;
-		let name: string | undefined;
-		let baseType: string | undefined;
-		let foundItemLevel = false;
-		let foundStats = false;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-
-			if (!line) continue;
-
-			if (line.startsWith('Item Class:')) {
-				itemClass = line.replace('Item Class:', '').trim();
-			} else if (line.startsWith('Item Level:')) {
-				const match = line.match(/Item Level: (\d+)/);
-				if (match && match[1]) {
-					itemLevel = parseInt(match[1], 10);
-					foundItemLevel = true;
-				}
-			} else if (line.startsWith('Rarity:')) {
-				rarity = line.replace('Rarity:', '').trim();
-				if (rarity === 'Unique' && i + 2 < lines.length) {
-					const nextLine = lines[i + 1];
-					const nextNextLine = lines[i + 2];
-					if (nextLine) name = nextLine.trim();
-					if (nextNextLine) baseType = nextNextLine.trim();
-				}
-			} else if (foundItemLevel && !foundStats) {
-				if (line.includes('--------')) {
-					foundStats = true;
-				}
-			} else if (foundStats && line && !line.includes('--------')) {
-				if (
-					line.match(/[0-9]+/) ||
-					line.includes('to ') ||
-					line.includes('increased ') ||
-					line.includes('reduced ') ||
-					line.includes('Recover')
-				) {
-					stats.push(line);
-				}
-			}
-		}
-
-		return { itemClass, itemLevel, stats, rarity, name, baseType };
-	}
 
 	async function handleSearch() {
 		if (!itemText.trim()) {

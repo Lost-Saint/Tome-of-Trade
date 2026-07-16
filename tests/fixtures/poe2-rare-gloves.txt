@@ -1,0 +1,25 @@
+Item Class: Gloves
+Rarity: Rare
+Soul Hand
+Pauascale Gloves
+--------
+Energy Shield: 34
+--------
+Requires: Level 45, 56 Int
+--------
+Sockets: S 
+--------
+Item Level: 62
+--------
++45 to maximum Life (rune)
+--------
+{ Prefix Modifier "Virile" (Tier: 2) — Life }
++104(100-119) to maximum Life
+{ Prefix Modifier "Aqua" (Tier: 4) — Mana }
++79(65-79) to maximum Mana
+{ Suffix Modifier "of the Walrus" (Tier: 4) — Elemental, Cold, Resistance }
++26(26-30)% to Cold Resistance
+{ Suffix Modifier "of Anger" (Tier: 4) — Damage, Critical }
+18(15-19)% increased Critical Damage Bonus
+{ Suffix Modifier "of the Prodigy" (Tier: 6) — Attribute }
++13(13-16) to Intelligence

@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { Snippet } from 'svelte';
 
-	let { href, children }: { href: string; children?: Snippet } = $props();
+	let { href, children }: { href: `#${string}`; children?: Snippet } = $props();
 </script>
 
-<a {href}>
+<a href={resolve(`/${href}`)}>
 	{#if children}{@render children()}{:else}Skip to main content{/if}
 </a>
 
